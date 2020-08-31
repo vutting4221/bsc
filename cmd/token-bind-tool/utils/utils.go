@@ -39,7 +39,7 @@ func GetCallOpts() *bind.CallOpts {
 	return callOpts
 }
 
-func DeployContract(ethClient *ethclient.Client, wallet *keystore.KeyStore, account accounts.Account, contractData hexutil.Bytes, chainId *big.Int) (common.Hash, error) {
+func DeployBEP20Contract(ethClient *ethclient.Client, wallet *keystore.KeyStore, account accounts.Account, contractData hexutil.Bytes, chainId *big.Int) (common.Hash, error) {
 	gasLimit := hexutil.Uint64(DefaultGasLimit)
 	nonce, err := ethClient.PendingNonceAt(context.Background(), account.Address)
 	if err != nil {

@@ -30,21 +30,23 @@ var (
 	tokenManager = common.HexToAddress("0x0000000000000000000000000000000000001008")
 )
 
-type Contract struct {
-	ContractData string `json:"contract_data"`
-	Symbol       string `json:"symbol"`
-	BEP2Symbol   string `json:"bep2_symbol"`
+type Config struct {
+	ContractData  string `json:"contract_data"`
+	Symbol        string `json:"symbol"`
+	BEP2Symbol    string `json:"bep2_symbol"`
+	LedgerAccount string `json:"ledger_account"`
 }
 
 func printUsage() {
-	fmt.Print("usage: ./token-bind-tool --network-type testnet --contract-data {path to contract json} --operation {transferBNBAndDeployContract or approveBindAndTransferOwnership}\n")
+	fmt.Print("usage: ./token-bind-tool --network-type testnet --operation {initKey, deployContract, approveBindAndTransferOwnership or refundRestBNB}\n")
 }
 
 func initFlags() {
 	flag.String(utils.NetworkType, utils.TestNet, "mainnet or testnet")
-	flag.String(utils.ContractData, "", "contract data file path")
+	flag.String(utils.ConfigPath, "", "config file path")
 	flag.String(utils.Operation, "", "operation to perform")
 	flag.String(utils.BEP20ContractAddr, "", "bep20 contract address")
+	flag.String(utils.LedgerAccount, "", "ledger account address")
 	pflag.CommandLine.AddGoFlagSet(flag.CommandLine)
 	pflag.Parse()
 	err := viper.BindPFlags(pflag.CommandLine)
@@ -53,21 +55,21 @@ func initFlags() {
 	}
 }
 
-func readContractData(contractPath string) (Contract, error) {
-	file, err := os.Open(contractPath)
+func readConfigData(configPath string) (Config, error) {
+	file, err := os.Open(configPath)
 	if err != nil {
-		return Contract{}, err
+		return Config{}, err
 	}
 	fileData, err := ioutil.ReadAll(file)
 	if err != nil {
-		return Contract{}, err
+		return Config{}, err
 	}
-	var contract Contract
-	err = json.Unmarshal(fileData, &contract)
+	var config Config
+	err = json.Unmarshal(fileData, &config)
 	if err != nil {
-		return Contract{}, err
+		return Config{}, err
 	}
-	return contract, nil
+	return config, nil
 }
 
 func generateOrGetTempAccount() (*keystore.KeyStore, accounts.Account, error) {
@@ -159,10 +161,9 @@ func main() {
 	initFlags()
 
 	networkType := viper.GetString(utils.NetworkType)
-	contractPath := viper.GetString(utils.ContractData)
+	configPath := viper.GetString(utils.ConfigPath)
 	operation := viper.GetString(utils.Operation)
-	if contractPath == "" ||
-		operation != utils.TransferBNB && operation != utils.ApproveBind ||
+	if operation != utils.DeployContract && operation != utils.ApproveBind && operation != utils.InitKey && operation != utils.RefundRestBNB ||
 		networkType != utils.TestNet && networkType != utils.Mainnet {
 		printUsage()
 		return
@@ -186,57 +187,69 @@ func main() {
 		chainId = big.NewInt(utils.TestnetChainID)
 	}
 	ethClient := ethclient.NewClient(rpcClient)
-	contract, err := readContractData(contractPath)
-	if err != nil {
-		fmt.Println(err.Error())
+
+	if operation == utils.InitKey {
+		_, tempAccount, err := generateOrGetTempAccount()
+		if err != nil {
+			fmt.Println(err.Error())
+			return
+		}
+		ledgerWallet, ledgerAccount, err := openLedger(ethClient)
+		if err != nil {
+			fmt.Println(err.Error())
+			return
+		}
+		defer ledgerWallet.Close()
+		fmt.Println(fmt.Sprintf("Ledger account %s, Temp account: %s", ledgerAccount.Address.String(), tempAccount.Address.String()))
 		return
 	}
+
 	keyStore, tempAccount, err := generateOrGetTempAccount()
 	if err != nil {
 		fmt.Println(err.Error())
 		return
 	}
 
-	ledgerWallet, ledgerAccount, err := openLedger(ethClient)
-	if err != nil {
-		fmt.Println(err.Error())
-		return
-	}
-	defer ledgerWallet.Close()
-
-	if operation == utils.TransferBNB {
-		contractAddr, err := TransferBNBAndDeployContractFromKeystoreAccount(ethClient, ledgerWallet, ledgerAccount, keyStore, tempAccount, contract, chainId)
+	if operation == utils.DeployContract {
+		configData, err := readConfigData(configPath)
 		if err != nil {
 			fmt.Println(err.Error())
 			return
 		}
-		fmt.Println(fmt.Sprintf("For BEP2 token %s, the deployed BEP20 contract address is %s", contract.BEP2Symbol, contractAddr.String()))
-	} else {
-		bep20ContractAddr := viper.GetString(utils.BEP20ContractAddr)
-		if bep20ContractAddr == "" {
-			fmt.Println("bep20 contract address is empty")
+
+		contractAddr, err := TransferBNBAndDeployContractFromKeystoreAccount(ethClient, keyStore, tempAccount, configData, chainId)
+		if err != nil {
+			fmt.Println(err.Error())
 			return
 		}
-		ApproveBindAndTransferOwnershipAndRestBalanceBackToLedgerAccount(ethClient, ledgerWallet, ledgerAccount, keyStore, tempAccount, contract, common.HexToAddress(bep20ContractAddr), chainId)
+		fmt.Println(fmt.Sprintf("For BEP2 token %s, the deployed BEP20 configData address is %s", configData.BEP2Symbol, contractAddr.String()))
+	} else if operation == utils.ApproveBind {
+		configData, err := readConfigData(configPath)
+		if err != nil {
+			fmt.Println(err.Error())
+			return
+		}
+
+		bep20ContractAddr := viper.GetString(utils.BEP20ContractAddr)
+		if bep20ContractAddr == "" {
+			fmt.Println("bep20 configData address is empty")
+			return
+		}
+		ApproveBindAndTransferOwnershipAndRestBalanceBackToLedgerAccount(ethClient, keyStore, tempAccount, configData, common.HexToAddress(bep20ContractAddr), chainId)
+	} else {
+		ledgerAccount := common.HexToAddress(viper.GetString(utils.LedgerAccount))
+		RefundRestBNB(ethClient, keyStore, tempAccount, ledgerAccount, chainId)
 	}
 
 }
 
-func TransferBNBAndDeployContractFromKeystoreAccount(ethClient *ethclient.Client, ledgerWallet accounts.Wallet, ledgerAccount accounts.Account, keyStore *keystore.KeyStore, tempAccount accounts.Account, contract Contract, chainId *big.Int) (common.Address, error) {
-	amount := big.NewInt(utils.OneBNB)
-	fmt.Println(fmt.Sprintf("Send %s BNB from to %s", big.NewInt(1).Div(amount, big.NewInt(1e18)).String(), tempAccount.Address.String()))
-	err := utils.SendBNBToTempAccount(ethClient, ledgerWallet, ledgerAccount, tempAccount.Address, amount, chainId)
-	if err != nil {
-		return common.Address{}, err
-	}
-	utils.Sleep(10)
-
+func TransferBNBAndDeployContractFromKeystoreAccount(ethClient *ethclient.Client, keyStore *keystore.KeyStore, tempAccount accounts.Account, contract Config, chainId *big.Int) (common.Address, error) {
 	fmt.Println(fmt.Sprintf("Deploy BEP20 contract %s from account %s", contract.Symbol, tempAccount.Address.String()))
 	contractByteCode, err := hex.DecodeString(contract.ContractData)
 	if err != nil {
 		return common.Address{}, err
 	}
-	txHash, err := utils.DeployContract(ethClient, keyStore, tempAccount, contractByteCode, chainId)
+	txHash, err := utils.DeployBEP20Contract(ethClient, keyStore, tempAccount, contractByteCode, chainId)
 	if err != nil {
 		return common.Address{}, err
 	}
@@ -251,7 +264,7 @@ func TransferBNBAndDeployContractFromKeystoreAccount(ethClient *ethclient.Client
 	return contractAddr, nil
 }
 
-func ApproveBindAndTransferOwnershipAndRestBalanceBackToLedgerAccount(ethClient *ethclient.Client, ledgerWallet accounts.Wallet, ledgerAccount accounts.Account, keyStore *keystore.KeyStore, tempAccount accounts.Account, contract Contract, bep20ContractAddr common.Address, chainId *big.Int) {
+func ApproveBindAndTransferOwnershipAndRestBalanceBackToLedgerAccount(ethClient *ethclient.Client, keyStore *keystore.KeyStore, tempAccount accounts.Account, configData Config, bep20ContractAddr common.Address, chainId *big.Int) {
 	bep20Instance, err := bep20.NewBep20(bep20ContractAddr, ethClient)
 	if err != nil {
 		fmt.Println(err.Error())
@@ -264,7 +277,7 @@ func ApproveBindAndTransferOwnershipAndRestBalanceBackToLedgerAccount(ethClient 
 	}
 	fmt.Println(fmt.Sprintf("Total Supply %s", totalSupply.String()))
 
-	fmt.Println(fmt.Sprintf("Approve %s:%s to TokenManager from %s", totalSupply.String(), contract.Symbol, tempAccount.Address.String()))
+	fmt.Println(fmt.Sprintf("Approve %s:%s to TokenManager from %s", totalSupply.String(), configData.Symbol, tempAccount.Address.String()))
 	approveTxHash, err := bep20Instance.Approve(utils.GetTransactor(ethClient, keyStore, tempAccount, big.NewInt(0)), tokenManager, totalSupply)
 	if err != nil {
 		fmt.Println(err.Error())
@@ -275,7 +288,7 @@ func ApproveBindAndTransferOwnershipAndRestBalanceBackToLedgerAccount(ethClient 
 	utils.Sleep(20)
 
 	tokenManagerInstance, _ := tokenmanager.NewTokenmanager(tokenManager, ethClient)
-	approveBindTx, err := tokenManagerInstance.ApproveBind(utils.GetTransactor(ethClient, keyStore, tempAccount, big.NewInt(1e16)), bep20ContractAddr, contract.BEP2Symbol)
+	approveBindTx, err := tokenManagerInstance.ApproveBind(utils.GetTransactor(ethClient, keyStore, tempAccount, big.NewInt(1e16)), bep20ContractAddr, configData.BEP2Symbol)
 	if err != nil {
 		fmt.Println(err.Error())
 		return
@@ -292,7 +305,7 @@ func ApproveBindAndTransferOwnershipAndRestBalanceBackToLedgerAccount(ethClient 
 	fmt.Println("Track approveBind Tx status")
 	if approveBindTxRecipient.Status != 1 {
 		fmt.Println("Approve Bind Failed")
-		rejectBindTx, err := tokenManagerInstance.RejectBind(utils.GetTransactor(ethClient, keyStore, tempAccount, big.NewInt(1e16)), bep20ContractAddr, contract.BEP2Symbol)
+		rejectBindTx, err := tokenManagerInstance.RejectBind(utils.GetTransactor(ethClient, keyStore, tempAccount, big.NewInt(1e16)), bep20ContractAddr, configData.BEP2Symbol)
 		if err != nil {
 			fmt.Println(err.Error())
 			return
@@ -315,16 +328,17 @@ func ApproveBindAndTransferOwnershipAndRestBalanceBackToLedgerAccount(ethClient 
 		fmt.Println(err.Error())
 		return
 	}
-	fmt.Println(fmt.Sprintf("Transfer %s %s to ledger account %s", totalSupply.String(), contract.Symbol, tempAccount.Address.String()))
-	transferOwnerShipTxHash, err := ownershipInstance.TransferOwnership(utils.GetTransactor(ethClient, keyStore, tempAccount, big.NewInt(0)), ledgerAccount.Address)
+	fmt.Println(fmt.Sprintf("Transfer ownership %s %s to ledger account %s", totalSupply.String(), configData.Symbol, tempAccount.Address.String()))
+	transferOwnerShipTxHash, err := ownershipInstance.TransferOwnership(utils.GetTransactor(ethClient, keyStore, tempAccount, big.NewInt(0)), common.HexToAddress(configData.LedgerAccount))
 	if err != nil {
 		fmt.Println(err.Error())
 		return
 	}
 	fmt.Println(fmt.Sprintf("transfer ownership txHash %s", transferOwnerShipTxHash.Hash().String()))
-	utils.Sleep(20)
-	fmt.Println(fmt.Sprintf("Send BNB back to ledger account, txhash %s", transferOwnerShipTxHash.Hash().String()))
-	err = utils.SendBNBBackToLegerAccount(ethClient, keyStore, tempAccount, ledgerAccount.Address, chainId)
+}
+
+func RefundRestBNB(ethClient *ethclient.Client, keyStore *keystore.KeyStore, tempAccount accounts.Account, ledgerAccount common.Address, chainId *big.Int) {
+	err := utils.SendBNBBackToLegerAccount(ethClient, keyStore, tempAccount, ledgerAccount, chainId)
 	if err != nil {
 		fmt.Println(err.Error())
 	}
