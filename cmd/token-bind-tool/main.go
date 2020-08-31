@@ -42,6 +42,7 @@ func printUsage() {
 }
 
 func initFlags() {
+	flag.String(utils.KeystorePath, utils.BindKeystore, "keystore path")
 	flag.String(utils.NetworkType, utils.TestNet, "mainnet or testnet")
 	flag.String(utils.ConfigPath, "", "config file path")
 	flag.String(utils.Operation, "", "operation to perform")
@@ -72,25 +73,13 @@ func readConfigData(configPath string) (Config, error) {
 	return config, nil
 }
 
-func generateOrGetTempAccount() (*keystore.KeyStore, accounts.Account, error) {
+func generateOrGetTempAccount(keystorePath string) (*keystore.KeyStore, accounts.Account, error) {
 	path, err := os.Getwd()
 	if err != nil {
 		return nil, accounts.Account{}, err
 	}
-	if _, err := os.Stat(filepath.Join(path, utils.BindKeystore)); os.IsNotExist(err) {
-		err = os.Mkdir(filepath.Join(path, utils.BindKeystore), os.ModePerm)
-		if err != nil {
-			panic(err)
-		}
-	}
-	keyStore := keystore.NewKeyStore(filepath.Join(path, utils.BindKeystore), keystore.StandardScryptN, keystore.StandardScryptP)
-	var files []string
-	err = filepath.Walk(filepath.Join(path, utils.BindKeystore), func(path string, info os.FileInfo, err error) error {
-		files = append(files, path)
-		return nil
-	})
-	files = files[1:]
-	if len(files) == 0 {
+	keyStore := keystore.NewKeyStore(keystorePath, keystore.StandardScryptN, keystore.StandardScryptP)
+	if len(keyStore.Accounts()) == 0 {
 		newAccount, err := keyStore.NewAccount(utils.Passwd)
 		if err != nil {
 			return nil, accounts.Account{}, err
@@ -99,15 +88,13 @@ func generateOrGetTempAccount() (*keystore.KeyStore, accounts.Account, error) {
 		if err != nil {
 			return nil, accounts.Account{}, err
 		}
-		fmt.Println(fmt.Sprintf("Create new account %s", newAccount.Address.String()))
 		return keyStore, newAccount, nil
-	} else if len(files) == 1 {
+	} else if len(keyStore.Accounts()) == 1 {
 		accountList := keyStore.Accounts()
 		if len(accountList) != 1 {
 			return nil, accounts.Account{}, err
 		}
 		account := accountList[0]
-		fmt.Println(fmt.Sprintf("Load account %s", account.Address.String()))
 		err = keyStore.Unlock(account, utils.Passwd)
 		if err != nil {
 			return nil, accounts.Account{}, err
@@ -151,9 +138,6 @@ func openLedger(ethClient *ethclient.Client) (accounts.Wallet, accounts.Account,
 		return nil, accounts.Account{}, fmt.Errorf("empty ledger account")
 	}
 	ledgerAccount := wallet.Accounts()[0]
-
-	fmt.Println(fmt.Sprintf("Ledger account %s", ledgerAccount.Address.String()))
-
 	return wallet, ledgerAccount, nil
 }
 
@@ -188,8 +172,9 @@ func main() {
 	}
 	ethClient := ethclient.NewClient(rpcClient)
 
+	keystorePath := viper.GetString(utils.KeystorePath)
 	if operation == utils.InitKey {
-		_, tempAccount, err := generateOrGetTempAccount()
+		_, tempAccount, err := generateOrGetTempAccount(keystorePath)
 		if err != nil {
 			fmt.Println(err.Error())
 			return
@@ -201,10 +186,12 @@ func main() {
 		}
 		defer ledgerWallet.Close()
 		fmt.Println(fmt.Sprintf("Ledger account %s, Temp account: %s", ledgerAccount.Address.String(), tempAccount.Address.String()))
+		utils.PrintAddrExplorerUrl("Ledger account on explorer", ledgerAccount.Address.String(), chainId)
+		utils.PrintAddrExplorerUrl("Temp account on explorer", tempAccount.Address.String(), chainId)
 		return
 	}
 
-	keyStore, tempAccount, err := generateOrGetTempAccount()
+	keyStore, tempAccount, err := generateOrGetTempAccount(keystorePath)
 	if err != nil {
 		fmt.Println(err.Error())
 		return
@@ -253,6 +240,7 @@ func TransferBNBAndDeployContractFromKeystoreAccount(ethClient *ethclient.Client
 	if err != nil {
 		return common.Address{}, err
 	}
+	utils.PrintTxExplorerUrl("Deploy BEP20 contract", txHash.String(), chainId)
 	utils.Sleep(10)
 
 	txRecipient, err := ethClient.TransactionReceipt(context.Background(), txHash)
@@ -260,7 +248,7 @@ func TransferBNBAndDeployContractFromKeystoreAccount(ethClient *ethclient.Client
 		return common.Address{}, err
 	}
 	contractAddr := txRecipient.ContractAddress
-	fmt.Println(fmt.Sprintf("BEP20 contract addrss: %s", contractAddr.String()))
+	utils.PrintAddrExplorerUrl("BEP20 contract", contractAddr.String(), chainId)
 	return contractAddr, nil
 }
 
@@ -283,7 +271,7 @@ func ApproveBindAndTransferOwnershipAndRestBalanceBackToLedgerAccount(ethClient 
 		fmt.Println(err.Error())
 		return
 	}
-	fmt.Println(fmt.Sprintf("Approve token to tokenManager txHash %s", approveTxHash.Hash().String()))
+	utils.PrintTxExplorerUrl("Approve token to tokenManager txHash", approveTxHash.Hash().String(), chainId)
 
 	utils.Sleep(20)
 
@@ -293,7 +281,7 @@ func ApproveBindAndTransferOwnershipAndRestBalanceBackToLedgerAccount(ethClient 
 		fmt.Println(err.Error())
 		return
 	}
-	fmt.Println(fmt.Sprintf("ApproveBind txHash %s", approveBindTx.Hash().String()))
+	utils.PrintTxExplorerUrl("ApproveBind txHash", approveBindTx.Hash().String(), chainId)
 
 	utils.Sleep(10)
 
@@ -310,7 +298,7 @@ func ApproveBindAndTransferOwnershipAndRestBalanceBackToLedgerAccount(ethClient 
 			fmt.Println(err.Error())
 			return
 		}
-		fmt.Println(fmt.Sprintf("rejectBind txHash %s", rejectBindTx.Hash().String()))
+		utils.PrintTxExplorerUrl("RejectBind txHash", rejectBindTx.Hash().String(), chainId)
 		utils.Sleep(10)
 		fmt.Println("Track rejectBind Tx status")
 		rejectBindTxRecipient, err := ethClient.TransactionReceipt(context.Background(), rejectBindTx.Hash())
@@ -334,7 +322,7 @@ func ApproveBindAndTransferOwnershipAndRestBalanceBackToLedgerAccount(ethClient 
 		fmt.Println(err.Error())
 		return
 	}
-	fmt.Println(fmt.Sprintf("transfer ownership txHash %s", transferOwnerShipTxHash.Hash().String()))
+	utils.PrintTxExplorerUrl("Transfer ownership txHash", transferOwnerShipTxHash.Hash().String(), chainId)
 }
 
 func RefundRestBNB(ethClient *ethclient.Client, keyStore *keystore.KeyStore, tempAccount accounts.Account, ledgerAccount common.Address, chainId *big.Int) {

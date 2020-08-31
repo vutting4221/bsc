@@ -132,3 +132,19 @@ func toTransaction(args *ethapi.SendTxArgs) *types.Transaction {
 	}
 	return types.NewTransaction(uint64(*args.Nonce), *args.To, (*big.Int)(args.Value), uint64(*args.Gas), (*big.Int)(args.GasPrice), input)
 }
+
+func PrintTxExplorerUrl(msg, txHash string, chainID *big.Int) {
+	if chainID.Cmp(big.NewInt(MainnetChainID)) == 0 {
+		fmt.Println(fmt.Sprintf(MainnetExplorerTxUrl, msg, txHash))
+	} else {
+		fmt.Println(fmt.Sprintf(TestnetExplorerTxUrl, msg, txHash))
+	}
+}
+
+func PrintAddrExplorerUrl(msg, address string, chainID *big.Int) {
+	if chainID.Cmp(big.NewInt(MainnetChainID)) == 0 {
+		fmt.Println(fmt.Sprintf(MainnetExplorerAddressUrl, msg, address))
+	} else {
+		fmt.Println(fmt.Sprintf(TestnetExplorerAddressUrl, msg, address))
+	}
+}
