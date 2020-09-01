@@ -27,7 +27,8 @@ import (
 )
 
 var (
-	tokenManager = common.HexToAddress("0x0000000000000000000000000000000000001008")
+	tokenManager   = common.HexToAddress("0x0000000000000000000000000000000000001008")
+	ledgerBasePath = accounts.DerivationPath{0x80000000 + 44, 0x80000000 + 60, 0x80000000 + 0, 0, 0}
 )
 
 type Config struct {
@@ -48,6 +49,7 @@ func initFlags() {
 	flag.String(utils.Operation, "", "operation to perform")
 	flag.String(utils.BEP20ContractAddr, "", "bep20 contract address")
 	flag.String(utils.LedgerAccount, "", "ledger account address")
+	flag.Int64(utils.LedgerAccountNumber, 1, "ledger account number")
 	pflag.CommandLine.AddGoFlagSet(flag.CommandLine)
 	pflag.Parse()
 	err := viper.BindPFlags(pflag.CommandLine)
@@ -105,14 +107,14 @@ func generateOrGetTempAccount(keystorePath string) (*keystore.KeyStore, accounts
 	}
 }
 
-func openLedger(ethClient *ethclient.Client) (accounts.Wallet, accounts.Account, error) {
+func openLedger(ledgerAddressNumber uint32) (accounts.Wallet, []accounts.Account, error) {
 	ledgerHub, err := usbwallet.NewLedgerHub()
 	if err != nil {
-		return nil, accounts.Account{}, fmt.Errorf("failed to start Ledger hub, disabling: %v", err)
+		return nil, nil, fmt.Errorf("failed to start Ledger hub, disabling: %v", err)
 	}
 	wallets := ledgerHub.Wallets()
 	if len(wallets) == 0 {
-		return nil, accounts.Account{}, fmt.Errorf("empty ledger wallet")
+		return nil, nil, fmt.Errorf("empty ledger wallet")
 	}
 	wallet := wallets[0]
 	err = wallet.Close()
@@ -122,23 +124,31 @@ func openLedger(ethClient *ethclient.Client) (accounts.Wallet, accounts.Account,
 
 	err = wallet.Open("")
 	if err != nil {
-		return nil, accounts.Account{}, fmt.Errorf("failed to start Ledger hub, disabling: %v", err)
+		return nil, nil, fmt.Errorf("failed to start Ledger hub, disabling: %v", err)
 	}
 
 	walletStatus, err := wallet.Status()
 	if err != nil {
-		return nil, accounts.Account{}, fmt.Errorf("failed to start Ledger hub, disabling: %v", err)
+		return nil, nil, fmt.Errorf("failed to start Ledger hub, disabling: %v", err)
 	}
 	fmt.Println(walletStatus)
 	//fmt.Println(wallet.URL())
 
-	wallet.SelfDerive([]accounts.DerivationPath{accounts.LegacyLedgerBaseDerivationPath, accounts.DefaultBaseDerivationPath}, ethClient)
-	utils.Sleep(3)
-	if len(wallet.Accounts()) == 0 {
-		return nil, accounts.Account{}, fmt.Errorf("empty ledger account")
+	ledgerAccounts := make([]accounts.Account, 0, ledgerAddressNumber)
+	for idx := uint32(0); idx < ledgerAddressNumber; idx++ {
+		ledgerPath := make(accounts.DerivationPath, len(ledgerBasePath))
+		copy(ledgerPath, ledgerBasePath)
+		ledgerPath[2] = ledgerPath[2] + idx
+		acc, err := wallet.Derive(ledgerPath, true)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to derive account from ledger: %v", err)
+		}
+		ledgerAccounts = append(ledgerAccounts, acc)
 	}
-	ledgerAccount := wallet.Accounts()[0]
-	return wallet, ledgerAccount, nil
+	if len(wallet.Accounts()) == 0 {
+		return nil, nil, fmt.Errorf("empty ledger account")
+	}
+	return wallet, ledgerAccounts, nil
 }
 
 func main() {
@@ -179,15 +189,39 @@ func main() {
 			fmt.Println(err.Error())
 			return
 		}
-		ledgerWallet, ledgerAccount, err := openLedger(ethClient)
+
+		ledgerAccountNumber := viper.GetInt32(utils.LedgerAccountNumber)
+		ledgerWallet, ledgerAccounts, err := openLedger(uint32(ledgerAccountNumber))
 		if err != nil {
 			fmt.Println(err.Error())
 			return
 		}
 		defer ledgerWallet.Close()
-		fmt.Println(fmt.Sprintf("Ledger account %s, Temp account: %s", ledgerAccount.Address.String(), tempAccount.Address.String()))
-		utils.PrintAddrExplorerUrl("Ledger account on explorer", ledgerAccount.Address.String(), chainId)
-		utils.PrintAddrExplorerUrl("Temp account on explorer", tempAccount.Address.String(), chainId)
+
+		fmt.Print(fmt.Sprintf("Temp account: %s", tempAccount.Address.String()))
+		utils.PrintAddrExplorerUrl(", Explorer url: ", tempAccount.Address.String(), chainId)
+		for idx, ledgerAcc := range ledgerAccounts {
+			fmt.Print(fmt.Sprintf("Ledger account %d: %s", idx, ledgerAcc.Address.String()))
+			utils.PrintAddrExplorerUrl(", Explorer url: ", ledgerAcc.Address.String(), chainId)
+		}
+
+		file, err := os.Create("ledgerAccounts.sh")
+		if err != nil {
+			fmt.Println(err.Error())
+			return
+		} else {
+			file.WriteString("#!/bin/bash\n")
+		}
+		file.WriteString("export ledgerAccounts=(")
+		for idx, ledgerAcc := range ledgerAccounts {
+			if idx != 0 {
+				file.WriteString(", ")
+			}
+			file.WriteString(ledgerAcc.Address.String())
+		}
+		file.WriteString(")\n")
+
+		file.Close()
 		return
 	}
 

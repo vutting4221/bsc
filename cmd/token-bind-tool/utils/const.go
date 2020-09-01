@@ -1,13 +1,14 @@
 package utils
 
 const (
-	Passwd            = "12345678"
-	NetworkType       = "network-type"
-	KeystorePath      = "keystore-path"
-	ConfigPath        = "config-path"
-	Operation         = "operation"
-	BEP20ContractAddr = "bep20-contract-addr"
-	LedgerAccount     = "ledger-account"
+	Passwd              = "12345678"
+	NetworkType         = "network-type"
+	KeystorePath        = "keystore-path"
+	ConfigPath          = "config-path"
+	Operation           = "operation"
+	BEP20ContractAddr   = "bep20-contract-addr"
+	LedgerAccount       = "ledger-account"
+	LedgerAccountNumber = "ledger-account-number"
 
 	InitKey        = "initKey"
 	RefundRestBNB  = "refundRestBNB"
