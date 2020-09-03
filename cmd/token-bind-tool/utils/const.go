@@ -7,6 +7,7 @@ const (
 	ConfigPath          = "config-path"
 	Operation           = "operation"
 	BEP20ContractAddr   = "bep20-contract-addr"
+	BEP2Symbol          = "bep2-symbol"
 	LedgerAccount       = "ledger-account"
 	LedgerAccountNumber = "ledger-account-number"
 	LedgerAccountIndex  = "ledger-account-index"

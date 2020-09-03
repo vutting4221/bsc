@@ -6,13 +6,15 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"github.com/ethereum/go-ethereum/accounts/abi"
-	"github.com/ethereum/go-ethereum/common/hexutil"
 	"io/ioutil"
 	"math/big"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/ethereum/go-ethereum/accounts/abi"
+	"github.com/ethereum/go-ethereum/cmd/token-bind-tool/tokenhub"
+	"github.com/ethereum/go-ethereum/common/hexutil"
 
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
@@ -30,8 +32,9 @@ import (
 )
 
 var (
-	tokenManager   = common.HexToAddress("0x0000000000000000000000000000000000001008")
-	ledgerBasePath = accounts.DerivationPath{0x80000000 + 44, 0x80000000 + 60, 0x80000000 + 0, 0, 0}
+	tokenHubContractAddr     = common.HexToAddress("0x0000000000000000000000000000000000001004")
+	tokenManagerContractAddr = common.HexToAddress("0x0000000000000000000000000000000000001008")
+	ledgerBasePath           = accounts.DerivationPath{0x80000000 + 44, 0x80000000 + 60, 0x80000000 + 0, 0, 0}
 )
 
 type Config interface {
@@ -69,6 +72,7 @@ func initFlags() {
 	flag.String(utils.ConfigPath, "", "config file path")
 	flag.String(utils.Operation, "", "operation to perform, valid operation: initKey, deployContract, approveBindAndTransferOwnership, refundRestBNB, deploy_transferTokenAndOwnership_refund, approveBindFromLedger")
 	flag.String(utils.BEP20ContractAddr, "", "bep20 contract address")
+	flag.String(utils.BEP2Symbol, "", "bep2 token symbol")
 	flag.String(utils.LedgerAccount, "", "ledger account address")
 	flag.Int64(utils.LedgerAccountNumber, 1, "ledger account number")
 	flag.Int64(utils.LedgerAccountIndex, 0, "ledger account index")
@@ -291,13 +295,13 @@ func main() {
 		}
 
 		bep20ContractAddr := viper.GetString(utils.BEP20ContractAddr)
-		if strings.HasPrefix(bep20ContractAddr, "0x") || len(bep20ContractAddr) == 42 {
+		if !strings.HasPrefix(bep20ContractAddr, "0x") || len(bep20ContractAddr) != 42 {
 			fmt.Println("Invalid bep20 contract address")
 			return
 		}
-		config, err := readConfigData(configPath)
-		if err != nil {
-			fmt.Println(err.Error())
+		bep2Symbol := viper.GetString(utils.BEP2Symbol)
+		if len(bep2Symbol) == 0 {
+			fmt.Println("missing bep2 symbol")
 			return
 		}
 		ledgerWallet, ledgerAccount, err := openLedger(uint32(ledgerAccountIndex))
@@ -305,7 +309,7 @@ func main() {
 			fmt.Println(err.Error())
 			return
 		}
-		ApproveBind(ethClient, ledgerWallet, ledgerAccount, config.BEP2Symbol, common.HexToAddress(bep20ContractAddr), peggyAmount,  chainId)
+		ApproveBind(ethClient, ledgerWallet, ledgerAccount, bep2Symbol, common.HexToAddress(bep20ContractAddr), peggyAmount, chainId)
 	default:
 		fmt.Println(fmt.Sprintf("unsupported operation: %s", operation))
 	}
@@ -349,17 +353,28 @@ func ApproveBindAndTransferOwnershipAndRestBalanceBackToLedgerAccount(ethClient 
 	fmt.Println(fmt.Sprintf("Total Supply %s", totalSupply.String()))
 
 	fmt.Println(fmt.Sprintf("Approve %s:%s to TokenManager from %s", totalSupply.String(), configData.Symbol, tempAccount.Address.String()))
-	approveTxHash, err := bep20Instance.Approve(utils.GetTransactor(ethClient, keyStore, tempAccount, big.NewInt(0)), tokenManager, totalSupply)
+	approveTxHash, err := bep20Instance.Approve(utils.GetTransactor(ethClient, keyStore, tempAccount, big.NewInt(0)), tokenManagerContractAddr, totalSupply)
 	if err != nil {
 		fmt.Println(err.Error())
 		return
 	}
-	utils.PrintTxExplorerUrl("Approve token to tokenManager txHash", approveTxHash.Hash().String(), chainId)
+	utils.PrintTxExplorerUrl("Approve token to tokenManagerContractAddr txHash", approveTxHash.Hash().String(), chainId)
 
-	utils.Sleep(20)
+	utils.Sleep(10)
 
-	tokenManagerInstance, _ := tokenmanager.NewTokenmanager(tokenManager, ethClient)
-	approveBindTx, err := tokenManagerInstance.ApproveBind(utils.GetTransactor(ethClient, keyStore, tempAccount, big.NewInt(1e16)), bep20ContractAddr, configData.BEP2Symbol)
+	tokenhubInstance, err := tokenhub.NewTokenhub(tokenHubContractAddr, ethClient)
+	if err != nil {
+		fmt.Println(err.Error())
+		return
+	}
+	miniRelayerFee, err := tokenhubInstance.GetMiniRelayFee(utils.GetCallOpts())
+	if err != nil {
+		fmt.Println(err.Error())
+		return
+	}
+
+	tokenManagerInstance, _ := tokenmanager.NewTokenmanager(tokenManagerContractAddr, ethClient)
+	approveBindTx, err := tokenManagerInstance.ApproveBind(utils.GetTransactor(ethClient, keyStore, tempAccount, miniRelayerFee), bep20ContractAddr, configData.BEP2Symbol)
 	if err != nil {
 		fmt.Println(err.Error())
 		return
@@ -410,9 +425,9 @@ func ApproveBindAndTransferOwnershipAndRestBalanceBackToLedgerAccount(ethClient 
 }
 
 func ApproveBind(ethClient *ethclient.Client, ledgerWallet accounts.Wallet, ledgerAccount accounts.Account, bep2Symbol string, bep20ContractAddr common.Address, peggyAmount *big.Int, chainId *big.Int) {
-	fmt.Println(fmt.Sprintf("Approve %s:%s to TokenManager from %s", peggyAmount.String(), tokenManager.String()))
+	fmt.Println(fmt.Sprintf("Approve %s to TokenManager from %s", peggyAmount.String(), ledgerAccount.Address.String()))
 	bep20ABI, _ := abi.JSON(strings.NewReader(bep20.Bep20ABI))
-	approveTxData, err := bep20ABI.Pack("approve", tokenManager, peggyAmount)
+	approveTxData, err := bep20ABI.Pack("approve", tokenManagerContractAddr, peggyAmount)
 	if err != nil {
 		fmt.Println(err.Error())
 		return
@@ -423,10 +438,22 @@ func ApproveBind(ethClient *ethclient.Client, ledgerWallet accounts.Wallet, ledg
 		fmt.Println(err.Error())
 		return
 	}
-	utils.PrintTxExplorerUrl("Approve token to tokenManager txHash", approveTx.Hash().String(), chainId)
+	utils.PrintTxExplorerUrl("Approve token to tokenManagerContractAddr txHash", approveTx.Hash().String(), chainId)
 
-	utils.Sleep(20)
+	utils.Sleep(10)
 
+	tokenhubInstance, err := tokenhub.NewTokenhub(tokenHubContractAddr, ethClient)
+	if err != nil {
+		fmt.Println(err.Error())
+		return
+	}
+	miniRelayerFee, err := tokenhubInstance.GetMiniRelayFee(utils.GetCallOpts())
+	if err != nil {
+		fmt.Println(err.Error())
+		return
+	}
+
+	fmt.Println(fmt.Sprintf("ApproveBind from %s", ledgerAccount.Address.String()))
 	tokenManagerABI, _ := abi.JSON(strings.NewReader(utils.TokenManagerABI))
 	approveBindTxData, err := tokenManagerABI.Pack("approveBind", bep20ContractAddr, bep2Symbol)
 	if err != nil {
@@ -434,7 +461,7 @@ func ApproveBind(ethClient *ethclient.Client, ledgerWallet accounts.Wallet, ledg
 		return
 	}
 	hexApproveBindTxData := hexutil.Bytes(approveBindTxData)
-	approveBindTx, err := utils.SendTransactionFromLedger(ethClient, ledgerWallet, ledgerAccount, tokenManager, big.NewInt(0), &hexApproveBindTxData, chainId)
+	approveBindTx, err := utils.SendTransactionFromLedger(ethClient, ledgerWallet, ledgerAccount, tokenManagerContractAddr, miniRelayerFee, &hexApproveBindTxData, chainId)
 	if err != nil {
 		fmt.Println(err.Error())
 		return

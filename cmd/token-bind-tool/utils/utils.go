@@ -156,7 +156,7 @@ func SendTransactionFromLedger(rpcClient *ethclient.Client, wallet accounts.Wall
 		return nil, err
 	}
 	gasPrice := hexutil.Big(*big.NewInt(DefaultGasPrice))
-	amountBig := hexutil.Big(*value)
+	valueBig := hexutil.Big(*value)
 	nonceUint64 := hexutil.Uint64(nonce)
 	sendTxArgs := &ethapi.SendTxArgs{
 		From:     account.Address,
@@ -164,7 +164,7 @@ func SendTransactionFromLedger(rpcClient *ethclient.Client, wallet accounts.Wall
 		Data:     data,
 		Gas:      &gasLimit,
 		GasPrice: &gasPrice,
-		Value:    &amountBig,
+		Value:    &valueBig,
 		Nonce:    &nonceUint64,
 	}
 	tx := toTransaction(sendTxArgs)
