@@ -90,15 +90,15 @@ func SendBNBToTempAccount(rpcClient *ethclient.Client, wallet accounts.Wallet, a
 	return rpcClient.SendTransaction(context.Background(), signTx)
 }
 
-func SendBNBBackToLegerAccount(ethClient *ethclient.Client, wallet *keystore.KeyStore, account accounts.Account, recipient common.Address, chainId *big.Int) error {
+func SendAllRestBNB(ethClient *ethclient.Client, wallet *keystore.KeyStore, account accounts.Account, recipient common.Address, chainId *big.Int) (common.Hash, error) {
 	restBalance, _ := ethClient.BalanceAt(context.Background(), account.Address, nil)
 	txFee := big.NewInt(1).Mul(big.NewInt(21000), big.NewInt(DefaultGasPrice))
 	amount := big.NewInt(1).Sub(restBalance, txFee)
-	fmt.Println(fmt.Sprintf("temp account rest balance %s, transfer BNB tx fee %s, transfer %s back to ledger account", restBalance.String(), txFee.String(), amount.String()))
+	fmt.Println(fmt.Sprintf("rest balance %s, transfer BNB tx fee %s, transfer %s back to %s", restBalance.String(), txFee.String(), amount.String(), recipient.String()))
 	gasLimit := hexutil.Uint64(21000)
 	nonce, err := ethClient.PendingNonceAt(context.Background(), account.Address)
 	if err != nil {
-		return err
+		return common.Hash{}, err
 	}
 	gasPrice := hexutil.Big(*big.NewInt(DefaultGasPrice))
 	amountBig := hexutil.Big(*amount)
@@ -115,9 +115,9 @@ func SendBNBBackToLegerAccount(ethClient *ethclient.Client, wallet *keystore.Key
 
 	signTx, err := wallet.SignTx(account, tx, chainId)
 	if err != nil {
-		return err
+		return common.Hash{}, err
 	}
-	return ethClient.SendTransaction(context.Background(), signTx)
+	return signTx.Hash(), ethClient.SendTransaction(context.Background(), signTx)
 }
 
 func toTransaction(args *ethapi.SendTxArgs) *types.Transaction {
@@ -147,4 +147,31 @@ func PrintAddrExplorerUrl(msg, address string, chainID *big.Int) {
 	} else {
 		fmt.Println(fmt.Sprintf(TestnetExplorerAddressUrl, msg, address))
 	}
+}
+
+func SendTransactionFromLedger(rpcClient *ethclient.Client, wallet accounts.Wallet, account accounts.Account, recipient common.Address, value *big.Int, data *hexutil.Bytes, chainId *big.Int) (*types.Transaction, error) {
+	gasLimit := hexutil.Uint64(DefaultGasLimit)
+	nonce, err := rpcClient.PendingNonceAt(context.Background(), account.Address)
+	if err != nil {
+		return nil, err
+	}
+	gasPrice := hexutil.Big(*big.NewInt(DefaultGasPrice))
+	amountBig := hexutil.Big(*value)
+	nonceUint64 := hexutil.Uint64(nonce)
+	sendTxArgs := &ethapi.SendTxArgs{
+		From:     account.Address,
+		To:       &recipient,
+		Data:     data,
+		Gas:      &gasLimit,
+		GasPrice: &gasPrice,
+		Value:    &amountBig,
+		Nonce:    &nonceUint64,
+	}
+	tx := toTransaction(sendTxArgs)
+
+	signTx, err := wallet.SignTx(account, tx, chainId)
+	if err != nil {
+		return nil, err
+	}
+	return signTx, rpcClient.SendTransaction(context.Background(), signTx)
 }

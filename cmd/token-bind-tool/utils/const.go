@@ -9,11 +9,15 @@ const (
 	BEP20ContractAddr   = "bep20-contract-addr"
 	LedgerAccount       = "ledger-account"
 	LedgerAccountNumber = "ledger-account-number"
+	LedgerAccountIndex  = "ledger-account-index"
+	PeggyAmount         = "peggy-amount"
 
-	InitKey        = "initKey"
-	RefundRestBNB  = "refundRestBNB"
-	DeployContract = "deployContract"
-	ApproveBind    = "approveBindAndTransferOwnership"
+	InitKey               = "initKey"
+	RefundRestBNB         = "refundRestBNB"
+	DeployContract        = "deployContract"
+	ApproveBind           = "approveBindAndTransferOwnership"
+	DeployTransferRefund  = "deploy_transferTokenAndOwnership_refund"
+	ApproveBindFromLedger = "approveBindFromLedger"
 
 	Mainnet = "mainnet"
 	TestNet = "testnet"
@@ -30,9 +34,9 @@ const (
 	DefaultGasPrice = 20000000000
 	DefaultGasLimit = 4700000
 
-	MainnetExplorerTxUrl = "%s: https://explorer.binance.org/smart/tx/%s"
-	TestnetExplorerTxUrl = "%s: https://explorer.binance.org/smart-testnet/tx/%s"
+	MainnetExplorerTxUrl = "%s: https://bscscan.com/tx/%s"
+	TestnetExplorerTxUrl = "%s: https://testnet.bscscan.com/tx/%s"
 
-	MainnetExplorerAddressUrl = "%s: https://explorer.binance.org/smart/address/%s"
-	TestnetExplorerAddressUrl = "%s: https://explorer.binance.org/smart-testnet/address/%s"
+	MainnetExplorerAddressUrl = "%s: https://bscscan.com/address/%s"
+	TestnetExplorerAddressUrl = "%s: https://testnet.bscscan.com/address/%s"
 )
